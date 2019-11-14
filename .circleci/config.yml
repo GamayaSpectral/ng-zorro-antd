@@ -1,8 +1,58 @@
-version: 2
+version: 2.1
 jobs:
-  build:
+  test:
     docker:
-      - image: circleci/ruby:2.4.1
+      - image: circleci/node:12.13.0
     steps:
       - checkout
-      - run: echo "A first hello"
+      - attach_workspace:
+          at: ~/workspace
+      - restore_cache:
+          keys:
+            - dependency-cache-{{ checksum "package.json" }}
+            - dependency-cache-
+      - run:
+          name: Install dependencies
+          command: npm install
+      - save_cache:
+          key: dependency-cache-{{ checksum "package.json" }}
+          paths:
+            - ./node_modules
+      - run:
+          name: Linting
+          command: npm run lint
+      - run:
+          name: Building
+          command: npm run build
+      - persist_to_workspace:
+          name: Store WebAPP for deploy
+          root: .
+          paths:
+            - ./dist
+  deploy:
+    docker:
+      - image: cibuilds/aws:1.16.163
+    working_directory: ~/workspace
+    steps:
+      - attach_workspace:
+          at: ~/workspace
+      - run:
+          name: Deploy
+          command: aws s3 sync dist/ s3://prod.ui-kit.gamaya --acl public-read --delete
+      - run:
+          name: Invalidate Cloudfront cache
+          command: aws cloudfront create-invalidation --distribution-id E2358R370E5JXV --paths '/*'
+workflows:
+  test_and_deploy:
+    jobs:
+      - test
+      - deploy:
+          name: Deploy
+          context: AWS
+          requires:
+            - test
+          filters:
+            branches:
+              only:
+                - master
+                - develop
